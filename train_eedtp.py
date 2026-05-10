@@ -1,35 +1,4 @@
-"""Generalization Enhanced Fine-tuning (GEF, Sec. III-E.2).
 
-Fine-tunes the pre-trained EEDTP network on single-task LQ-GT pairs with:
-  - L_content:  pixel-level restoration loss (L1)
-  - L_reg:      parameter importance regularization (Eq. 5)
-  - L_orthog:   gradient orthogonal loss (Eq. 6-8)
-  - Mixed denoising training (~10% of batches, obj_aline aligned)
-  - Layer-wise weight decay for denoising gradients (Eq. 10)
-
-Usage:
-    # single-GPU
-    python train_eedtp.py \
-        --task dehazing \
-        --tmat 47 \
-        --load_pre_model True \
-        --pre_model ./ckpt/pretrained_model.pth \
-        --training_in_path ./data/train_input/ \
-        --training_gt_path ./data/train_gt/ \
-        --eval_in_path ./data/val_input/ \
-        --eval_gt_path ./data/val_gt/ \
-        --total_iters 500000
-
-    # multi-GPU
-    torchrun --nproc_per_node=4 train_eedtp.py \
-        --task dehazing \
-        --load_pre_model True \
-        --pre_model ./ckpt/pretrained_model.pth \
-        --training_in_path ./data/train_input/ \
-        --training_gt_path ./data/train_gt/ \
-        --eval_in_path ./data/val_input/ \
-        --eval_gt_path ./data/val_gt/
-"""
 import time, torchvision, argparse, logging, sys, os, gc
 import torch, random
 import numpy as np
