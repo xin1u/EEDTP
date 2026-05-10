@@ -26,7 +26,7 @@ pip install -r requirements.txt
 ```
 EEDTP/
 ├── networks/
-│   ├── eedtp_arch.py           # EEDTP conditional restoration network (NAFNet + IRSDE)
+│   ├── eedtp_arch.py           # EEDTP conditional restoration network 
 │   ├── diffusion_reg.py        # IRSDE + L_reg + L_orthog + weight decay
 │   ├── moe_adapter.py          # MoE adapters with time-based prompts
 │   ├── image_utils.py          # split-merge utilities
