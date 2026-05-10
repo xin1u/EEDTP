@@ -15,7 +15,7 @@ from glob import glob
 sys.path.append(os.getcwd())
 
 from networks.eedtp_arch import EEDTPRestorationNet
-from networks.diffusion_reg import IRSDE, compute_pretrain_loss
+from networks.diffusion_reg import NoiseSchedule, compute_pretrain_loss
 from utils.dist_utils import init_dist, is_main_process, cleanup
 
 
@@ -86,11 +86,11 @@ parser.add_argument('--diffusion_T', type=int, default=50)
 parser.add_argument('--total_iters', type=int, default=100000)
 
 # arch
-parser.add_argument('--base_channel', type=int, default=32)
+parser.add_argument('--base_channel', type=int, default=48)
 parser.add_argument('--num_res', type=int, default=6)
 parser.add_argument('--img_channel', type=int, default=3)
-parser.add_argument('--enc_blks', nargs='+', type=int, default=[1, 1, 1, 28])
-parser.add_argument('--dec_blks', nargs='+', type=int, default=[1, 1, 1, 1])
+parser.add_argument('--enc_blks', nargs='+', type=int, default=[2, 2, 4, 28])
+parser.add_argument('--dec_blks', nargs='+', type=int, default=[2, 2, 2, 2])
 
 args = parser.parse_args()
 
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     if is_main_process():
         print(f'#parameters: {sum(p.numel() for p in net.parameters()):,}')
 
-    sde = IRSDE(max_sigma=10, T=args.diffusion_T, schedule='linear', eps=0.005, device=device)
+    schedule = NoiseSchedule(max_sigma=10, T=args.diffusion_T, schedule='linear', eps=0.005, device=device)
 
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr, betas=(0.9, 0.99))
     scheduler = CosineAnnealingLR(optimizer, T_max=args.total_iters, eta_min=1e-7)
@@ -149,7 +149,7 @@ if __name__ == '__main__':
             x0 = x0.to(device)
 
             optimizer.zero_grad()
-            loss = compute_pretrain_loss(net, x0, sde)
+            loss = compute_pretrain_loss(net, x0, schedule)
             loss.backward()
             optimizer.step()
             scheduler.step()
