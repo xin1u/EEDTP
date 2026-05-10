@@ -1,4 +1,4 @@
-import torch,os,random,glob,math
+import torch,os,random,glob,math,bisect
 import torch.nn as nn
 from PIL import Image
 import numpy as np
@@ -9,7 +9,7 @@ from torch.utils.data import Dataset,DataLoader
 
 
 class my_dataset(Dataset):
-    def __init__(self, rootA_in, rootA_label ,crop_size =256, fix_sample_A = 500, regular_aug =False):
+    def __init__(self, rootA_in, rootA_label ,crop_size =256, fix_sample_A = 500, regular_aug =True):
         super(my_dataset,self).__init__()
 
         self.regular_aug = regular_aug
@@ -113,7 +113,7 @@ def read_txt(txt_name = 'RealHaze.txt',sample_num=5000):
     return path_in,path_gt
 
 class my_dataset_wTxt(Dataset):
-    def __init__(self, rootA, rootA_txt, crop_size=256, fix_sample_A=500, regular_aug=False):
+    def __init__(self, rootA, rootA_txt, crop_size=256, fix_sample_A=500, regular_aug=True):
         super(my_dataset_wTxt, self).__init__()
 
         self.regular_aug = regular_aug
@@ -266,7 +266,6 @@ class DatasetForInference(Dataset):
 import bisect
 import warnings
 
-from torch._utils import _accumulate
 from torch import randperm
 
 
@@ -357,6 +356,32 @@ class FusionDataset(BaseDataset):
     def __len__(self):
         return self.size
 
+
+class MultiTaskDataset(Dataset):
+    """Concatenates multiple task datasets, returning tmat per sample.
+
+    Used for cumulative incremental training: each step adds a new task's
+    dataset and tmat. Samples from all accumulated tasks are mixed.
+    """
+    def __init__(self, datasets, tmats):
+        assert len(datasets) == len(tmats)
+        self.datasets = datasets
+        self.tmats = tmats
+        self.cum_sizes = []
+        s = 0
+        for ds in datasets:
+            s += len(ds)
+            self.cum_sizes.append(s)
+
+    def __len__(self):
+        return self.cum_sizes[-1] if self.cum_sizes else 0
+
+    def __getitem__(self, idx):
+        task_idx = bisect.bisect_right(self.cum_sizes, idx)
+        if task_idx > 0:
+            idx = idx - self.cum_sizes[task_idx - 1]
+        data_in, data_gt, name = self.datasets[task_idx][idx]
+        return data_in, data_gt, name, self.tmats[task_idx]
 
 
 if __name__ == '__main__':
