@@ -11,14 +11,7 @@ import copy
 # ---------------------------------------------------------------------------
 
 class IRSDE:
-    """Image Restoration SDE with LQ as drift target (mu).
 
-    Forward process: q(x_t | x_0, mu) = N(mu_bar(x_0, t), sigma_bar(t))
-    where mu_bar = mu + (x_0 - mu) * exp(-theta_cumsum * dt)
-
-    The forward process degrades GT toward LQ (not toward pure noise),
-    making the denoising objective naturally aligned with restoration.
-    """
     def __init__(self, max_sigma=10, T=50, schedule='linear', eps=0.005, device=None):
         self.T = T
         self.device = device
@@ -82,12 +75,7 @@ class IRSDE:
         return self.model(x, self.mu, t, **kwargs)
 
     def generate_random_states(self, x0, mu):
-        """Generate noisy states from GT (x0) and LQ (mu).
 
-        Returns:
-            timesteps: [B,1,1,1] random timesteps
-            noisy_states: x_t sampled from q(x_t | x0, mu)
-        """
         if self.device is not None:
             x0 = x0.to(self.device)
             mu = mu.to(self.device)
@@ -131,20 +119,7 @@ class IRSDE:
 # ---------------------------------------------------------------------------
 
 def compute_pretrain_loss(net, x0, sde):
-    """Denoising pre-training loss (TMDDP). GT images only, no LQ needed.
 
-    Adds noise to GT: x_t = x_0 + sigma_bar(t) * noise.
-    Network receives (x_t, x_t, t) -- cond is the noisy image itself,
-    so input = cat(0, x_noisy). The network must learn to denoise x_t.
-
-    This input pattern matches inference cat(0, LQ), ensuring the
-    denoising prior transfers directly to restoration fine-tuning.
-
-    Args:
-        net: EEDTPRestorationNet
-        x0: clean GT images [B, C, H, W]
-        sde: IRSDE instance (uses sigma_bar for noise schedule)
-    """
     batch = x0.shape[0]
     device = x0.device
 
@@ -163,18 +138,7 @@ def compute_pretrain_loss(net, x0, sde):
 # ---------------------------------------------------------------------------
 
 def compute_denoising_loss(net, x0, mu, sde):
-    """Mixed denoising loss for fine-tuning. Uses IRSDE with mu=LQ.
 
-    IRSDE forward: x_t ~ N(mu_bar(x0, t), sigma_bar(t)) where mu = LQ.
-    Network receives (x_t, LQ, t), input = cat(x_t - LQ, LQ).
-    Loss: L1(GT, LQ - noise_pred), aligned with restoration objective.
-
-    Args:
-        net: EEDTPRestorationNet
-        x0: clean GT images [B, C, H, W]
-        mu: LQ condition images [B, C, H, W]
-        sde: IRSDE instance
-    """
     sde.set_mu(mu)
     timesteps, noisy_states = sde.generate_random_states(x0, mu)
 
@@ -188,12 +152,7 @@ def compute_denoising_loss(net, x0, mu, sde):
 # ---------------------------------------------------------------------------
 
 class ParameterRegularizer:
-    """Parameter importance regularization (Sec. III-D, Eq. 5).
 
-    Stores pre-trained parameters theta_0 and computes importance weights
-    Omega from gradient accumulation. The regularization loss:
-        L_reg = lambda * sum_k [ Omega_k * |delta_theta_k| + 0.5 * Omega_k^2 * delta_theta_k^2 ]
-    """
     def __init__(self, net):
         self.theta0 = {}
         self.omega = {}
@@ -251,12 +210,7 @@ class ParameterRegularizer:
 # ---------------------------------------------------------------------------
 
 class GradientOrthogonalLoss:
-    """Gradient orthogonality between denoising and reconstruction (Sec. III-D, Eq. 6-8).
 
-    s = avg cosine_sim(g_gen, g_res)   (cross-task, Eq. 6)
-    d = avg cosine_sim within tasks     (intra-task, Eq. 7)
-    L_orthog = (1 - s) + |d|           (Eq. 8)
-    """
     @staticmethod
     def compute(net, loss_gen, loss_res):
         params = [p for p in net.parameters() if p.requires_grad]
@@ -290,35 +244,13 @@ class GradientOrthogonalLoss:
 # ---------------------------------------------------------------------------
 
 def compute_layer_weight_decay(layer_idx, total_layers, tmat, a=0.05):
-    """Compute weight decay coefficient for denoising gradient update (Eq. 10).
 
-    w_decay(t) = exp(-a * t)
-
-    Applied layer-wise: shallower layers get stronger denoising gradient,
-    deeper layers get weaker.
-
-    Args:
-        layer_idx: current layer index (0 = shallowest)
-        total_layers: total number of layers
-        tmat: matching timestep for this degradation
-        a: decay rate (default 0.05)
-    """
     t_normalized = layer_idx / max(total_layers - 1, 1)
     return math.exp(-a * tmat * t_normalized)
 
 
 def apply_denoising_weight_decay(net, denoising_grads, tmat, a=0.05):
-    """Apply layer-wise weight decay to denoising gradients (Eq. 10).
 
-    Shallow layers get full denoising gradient, deeper layers get
-    exponentially decayed gradient.
-
-    Args:
-        net: EEDTPRestorationNet
-        denoising_grads: dict of {name: grad_tensor}
-        tmat: matching timestep
-        a: decay rate
-    """
     all_params = list(net.named_parameters())
     total = len(all_params)
 
