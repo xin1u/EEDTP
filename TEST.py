@@ -62,11 +62,11 @@ parser.add_argument('--gt_path', type=str, default='./data/test_gt/')
 parser.add_argument('--output_path', type=str, default='./results/')
 
 # arch
-parser.add_argument('--base_channel', type=int, default=32)
+parser.add_argument('--base_channel', type=int, default=48)
 parser.add_argument('--num_res', type=int, default=6)
 parser.add_argument('--img_channel', type=int, default=3)
-parser.add_argument('--enc_blks', nargs='+', type=int, default=[1, 1, 1, 28])
-parser.add_argument('--dec_blks', nargs='+', type=int, default=[1, 1, 1, 1])
+parser.add_argument('--enc_blks', nargs='+', type=int, default=[2, 2, 4, 28])
+parser.add_argument('--dec_blks', nargs='+', type=int, default=[2, 2, 2, 2])
 
 # task
 parser.add_argument('--task', type=str, default=None)
@@ -91,9 +91,9 @@ elif args.tmat is None:
 
 
 def restore(net, inp, tmat):
-    """Single forward: output = cond - net(cond, cond, tmat)."""
-    noise_pred = net(inp, inp, tmat)
-    return inp - noise_pred
+    """Single forward: restored = inp - net(inp, tmat)."""
+    residual = net(inp, tmat)
+    return inp - residual
 
 
 def ensemble_forward(net, inp, tmat):
