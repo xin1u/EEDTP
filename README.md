@@ -26,8 +26,8 @@ pip install -r requirements.txt
 ```
 EEDTP/
 ├── networks/
-│   ├── eedtp_arch.py           # EEDTP conditional restoration network
-│   ├── diffusion_reg.py        # SDE + L_reg + L_orthog + weight decay
+│   ├── eedtp_arch.py           # EEDTP conditional restoration network (NAFNet + IRSDE)
+│   ├── diffusion_reg.py        # IRSDE + L_reg + L_orthog + weight decay
 │   ├── moe_adapter.py          # MoE adapters with time-based prompts
 │   ├── image_utils.py          # split-merge utilities
 │   └── local_arch.py           # local architecture
@@ -140,6 +140,7 @@ python TEST.py \
     --gt_path ./data/test_gt/ \
     --task rainy
 ```
+
 
 
 
