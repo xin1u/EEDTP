@@ -26,7 +26,7 @@ pip install -r requirements.txt
 ```
 EEDTP/
 ├── networks/
-│   ├── eedtp_arch.py           # EEDTP conditional restoration network 
+│   ├── eedtp_arch.py           # EEDTP conditional restoration network (NAFNet + IRSDE)
 │   ├── diffusion_reg.py        # IRSDE + L_reg + L_orthog + weight decay
 │   ├── moe_adapter.py          # MoE adapters with time-based prompts
 │   ├── image_utils.py          # split-merge utilities
@@ -35,7 +35,7 @@ EEDTP/
 ├── loss/
 │   ├── losses.py
 │   └── pytorch_colors.py
-├── utils/UTILS.py, UTILS1.py
+├── utils/UTILS.py, UTILS1.py, dist_utils.py
 ├── train_pretrain.py            # Timestep Matched Diffusion Denoising Pre-training (TMDDP)
 ├── train_eedtp.py               # Generalization Enhanced Fine-tuning (GEF)
 ├── train_unified.py             # Multi-task Unified Learning (MTUL)
@@ -48,11 +48,14 @@ EEDTP/
 
 ## :rocket: Quick Start
 
+All training scripts support both **single-GPU** and **multi-GPU DDP** training. For multi-GPU, simply replace `python` with `torchrun --nproc_per_node=N`.
+
 ### 1. Diffusion Denoising Pre-training (TMDDP)
 
 Pre-train on GT images with diffusion denoising objective:
 
 ```bash
+# single-GPU
 python train_pretrain.py \
     --gt_dir ./data/gt_images/ \
     --save_path ./ckpt/ \
@@ -60,6 +63,12 @@ python train_pretrain.py \
     --total_iters 100000 \
     --batch_size 16 \
     --lr 5e-5
+
+# multi-GPU (4 GPUs)
+torchrun --nproc_per_node=4 train_pretrain.py \
+    --gt_dir ./data/gt_images/ \
+    --save_path ./ckpt/ \
+    --total_iters 100000
 ```
 
 ### 2. Single-task Generalization Enhanced Fine-tuning (GEF)
@@ -67,6 +76,7 @@ python train_pretrain.py \
 Fine-tune on degradation-specific paired data with diffusion regularization:
 
 ```bash
+# single-GPU
 python train_eedtp.py \
     --task dehazing \
     --load_pre_model True \
@@ -78,6 +88,16 @@ python train_eedtp.py \
     --total_iters 500000 \
     --lambda_reg 0.2 \
     --gen_prob 0.1
+
+# multi-GPU (4 GPUs)
+torchrun --nproc_per_node=4 train_eedtp.py \
+    --task dehazing \
+    --load_pre_model True \
+    --pre_model ./ckpt/pretrained_model.pth \
+    --training_in_path ./data/dehazing/train_input/ \
+    --training_gt_path ./data/dehazing/train_gt/ \
+    --eval_in_path ./data/dehazing/val_input/ \
+    --eval_gt_path ./data/dehazing/val_gt/
 ```
 
 ### 3. Multi-task Unified Learning (MTUL)
@@ -85,11 +105,19 @@ python train_eedtp.py \
 Incremental training with MoE adapters:
 
 ```bash
+# single-GPU
 python train_unified.py \
     --pre_model ./ckpt/pretrained_model.pth \
     --data_root ./data/ \
     --tasks noisy,rainy,jpeg,snowy,inpainting,raindrop,shadowed,lowlight,hazy,blurry \
     --iters_per_task 100000 \
+    --num_experts 10
+
+# multi-GPU (4 GPUs)
+torchrun --nproc_per_node=4 train_unified.py \
+    --pre_model ./ckpt/pretrained_model.pth \
+    --data_root ./data/ \
+    --tasks noisy,rainy,jpeg,snowy,inpainting,raindrop,shadowed,lowlight,hazy,blurry \
     --num_experts 10
 ```
 
@@ -112,6 +140,7 @@ python TEST.py \
     --gt_path ./data/test_gt/ \
     --task rainy
 ```
+
 
 
 ## :page_facing_up: Citation
