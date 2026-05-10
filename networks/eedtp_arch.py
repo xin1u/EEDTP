@@ -1,12 +1,4 @@
-"""EEDTP restoration network with time-step conditioning (Fig. 8d).
 
-Based on X-Restormer / NAFNet backbone with:
-  - SimpleGate (SGM) + SCA channel attention
-  - Sinusoidal time embedding via linear layer
-  - AdaLN-style time conditioning in each block
-  - Conditional input: x = cat(inp - cond, cond) -> 2*img_channel input
-  - Output is noise/residual: restored = cond - net_output
-"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
