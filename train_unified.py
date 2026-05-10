@@ -12,12 +12,13 @@ import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from utils.UTILS1 import compute_psnr
 from utils.UTILS import AverageMeters
+from loss.losses import fftLoss
 from torch.utils.tensorboard import SummaryWriter
-from datasets.datasets_pairs import my_dataset, my_dataset_eval
+from datasets.datasets_pairs import my_dataset, my_dataset_eval, MultiTaskDataset
 from networks.eedtp_arch import EEDTPRestorationNet
 from networks.moe_adapter import attach_moe_adapters
 from networks.diffusion_reg import (
-    IRSDE, compute_denoising_loss,
+    NoiseSchedule, compute_denoising_loss,
     ParameterRegularizer, GradientOrthogonalLoss,
 )
 from utils.dist_utils import init_dist, is_main_process, cleanup
@@ -79,11 +80,11 @@ parser.add_argument('--val_frequency', type=int, default=5000)
 parser.add_argument('--fix_sampleA', type=int, default=30000)
 
 # arch
-parser.add_argument('--base_channel', type=int, default=32)
+parser.add_argument('--base_channel', type=int, default=48)
 parser.add_argument('--num_res', type=int, default=6)
 parser.add_argument('--img_channel', type=int, default=3)
-parser.add_argument('--enc_blks', nargs='+', type=int, default=[1, 1, 1, 28])
-parser.add_argument('--dec_blks', nargs='+', type=int, default=[1, 1, 1, 1])
+parser.add_argument('--enc_blks', nargs='+', type=int, default=[2, 2, 4, 28])
+parser.add_argument('--dec_blks', nargs='+', type=int, default=[2, 2, 2, 2])
 
 # multi-task
 parser.add_argument('--tasks', type=str,
@@ -97,6 +98,7 @@ parser.add_argument('--pre_model', type=str, default='./ckpt/pretrained_model.pt
 parser.add_argument('--diffusion_T', type=int, default=50)
 parser.add_argument('--lambda_reg', type=float, default=0.2)
 parser.add_argument('--gen_prob', type=float, default=0.1)
+parser.add_argument('--lambda_fft', type=float, default=0.1)
 
 args = parser.parse_args()
 
@@ -116,7 +118,7 @@ def get_task_dataset(task_name, split='train'):
         gt_path = os.path.join(args.data_root, task_name, 'gt')
 
     if split == 'train':
-        return my_dataset(root_in=in_path, root_label=gt_path,
+        return my_dataset(in_path, gt_path,
                           crop_size=args.Crop_patches, fix_sample_A=args.fix_sampleA)
     else:
         return my_dataset_eval(root_in=in_path, root_label=gt_path,
@@ -139,8 +141,8 @@ def test_unified(net, task_order, device, Dname='val'):
             for data_in, label, name in eval_loader:
                 inputs = Variable(data_in).to(device)
                 labels = Variable(label).to(device)
-                noise_pred = net_eval(inputs, inputs, tc['tmat'])
-                outputs = inputs - noise_pred
+                residual = net_eval(inputs, tc['tmat'])
+                outputs = inputs - residual
                 psnr_sum += compute_psnr(outputs, labels)
                 count += 1
             if count > 0:
@@ -186,15 +188,17 @@ if __name__ == '__main__':
     net.to(device)
 
     if world_size > 1:
-        net = DDP(net, device_ids=[local_rank], find_unused_parameters=True)
+        net = DDP(net, device_ids=[local_rank])
     net_without_ddp = net.module if world_size > 1 else net
 
     if is_main_process():
         print(f'#parameters (with MoE): {sum(p.numel() for p in net.parameters()):,}')
 
-    sde = IRSDE(max_sigma=10, T=args.diffusion_T, schedule='linear', eps=0.005, device=device)
+    schedule = NoiseSchedule(max_sigma=10, T=args.diffusion_T, schedule='linear', eps=0.005, device=device)
 
     global_step = 0
+    accumulated_datasets = []
+    accumulated_tmats = []
     accumulated_tasks = []
 
     for step_idx, tc in enumerate(task_order):
@@ -208,25 +212,35 @@ if __name__ == '__main__':
             print(f'Accumulated tasks: {[t["name"] for t in accumulated_tasks]}')
             logging.info(f'Step {step_idx+1}: {task_name} tmat={tmat}')
 
-        param_reg = ParameterRegularizer(net_without_ddp)
-
-        optimizer = optim.Adam(net.parameters(), lr=args.learning_rate, betas=(0.9, 0.99))
-        scheduler = CosineAnnealingLR(optimizer, T_max=args.iters_per_task, eta_min=1e-7)
-
+        # add new task dataset to the pool
         try:
-            train_dataset = get_task_dataset(task_name, split='train')
+            new_ds = get_task_dataset(task_name, split='train')
         except Exception as e:
             if is_main_process():
                 print(f'skip {task_name}: {e}')
             continue
 
-        train_sampler = DistributedSampler(train_dataset) if world_size > 1 else None
+        accumulated_datasets.append(new_ds)
+        accumulated_tmats.append(tmat)
+
+        # build mixed dataset from ALL accumulated tasks
+        mixed_dataset = MultiTaskDataset(accumulated_datasets, accumulated_tmats)
+        train_sampler = DistributedSampler(mixed_dataset) if world_size > 1 else None
         train_loader = DataLoader(
-            train_dataset, batch_size=args.BATCH_SIZE,
+            mixed_dataset, batch_size=args.BATCH_SIZE,
             num_workers=8, shuffle=(train_sampler is None),
             sampler=train_sampler, drop_last=True)
 
+        if is_main_process():
+            print(f'mixed dataset: {len(mixed_dataset)} samples from {len(accumulated_datasets)} tasks')
+
+        param_reg = ParameterRegularizer(net_without_ddp)
+
+        optimizer = optim.Adam(net.parameters(), lr=args.learning_rate, betas=(0.9, 0.99))
+        scheduler_lr = CosineAnnealingLR(optimizer, T_max=args.iters_per_task, eta_min=1e-7)
+
         train_meters = AverageMeters()
+        criterion_fft = fftLoss().to(device)
         step = 0
         epoch = 0
         st = time.time()
@@ -238,24 +252,27 @@ if __name__ == '__main__':
                 train_sampler.set_epoch(epoch)
 
             for train_data in train_loader:
-                data_in, label, img_name = train_data
+                data_in, label, img_name, tmat_batch = train_data
                 step += 1
                 global_step += 1
 
                 inputs = Variable(data_in).to(device)
                 labels = Variable(label).to(device)
+                tmat_batch = tmat_batch.to(device)
 
-                noise_pred = net(inputs, inputs, tmat)
-                outputs = inputs - noise_pred
+                # restoration: predict residual, each sample uses its own tmat
+                residual = net(inputs, tmat_batch)
+                outputs = inputs - residual
                 loss_content = F.l1_loss(outputs, labels)
-                total_loss = loss_content
+                loss_fft = criterion_fft(outputs, labels)
+                total_loss = loss_content + args.lambda_fft * loss_fft
 
                 loss_gen = torch.tensor(0.)
                 loss_orthog = torch.tensor(0.)
                 loss_reg = torch.tensor(0.)
 
                 if random.random() < args.gen_prob:
-                    loss_gen = compute_denoising_loss(net, labels, inputs, sde)
+                    loss_gen = compute_denoising_loss(net, labels, schedule)
                     loss_orthog = GradientOrthogonalLoss.compute(net, loss_gen, loss_content)
                     loss_reg = param_reg.loss(net_without_ddp, lambda_reg=args.lambda_reg)
                     total_loss = total_loss + loss_reg + loss_orthog
@@ -263,12 +280,13 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 total_loss.backward()
                 optimizer.step()
-                scheduler.step()
+                scheduler_lr.step()
 
                 if is_main_process() and step % args.print_frequency == 0:
                     out_psnr = compute_psnr(outputs, labels)
-                    print(f"  [{task_name}] step:{step}/{args.iters_per_task} "
-                          f"loss:{total_loss.item():.5f} psnr:{out_psnr:.2f} t:{time.time()-st:.1f}s")
+                    print(f"  [step {step_idx+1}] iter:{step}/{args.iters_per_task} "
+                          f"loss:{total_loss.item():.5f}(l1:{loss_content.item():.4f},fft:{loss_fft.item():.4f}) "
+                          f"psnr:{out_psnr:.2f} t:{time.time()-st:.1f}s")
                     st = time.time()
 
                 if step >= args.iters_per_task:
