@@ -10,7 +10,6 @@ This is the official PyTorch implementation of the paper:
 
 ![intro](assets/intro.png)
 
-
 ## :wrench: Dependencies and Installation
 
 ```bash
