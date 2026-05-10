@@ -129,6 +129,6 @@ If you find this work useful, please cite:
 ```
 
 
-## :e-mail: Contact
+## :postbox: Contact
 
-If you have any questions, please feel free to contact us via email: `xin1u@mail.ustc.edu.cn`
+Please feel free to contact us if there is any question (luxion@mail.ustc.edu.cn).
