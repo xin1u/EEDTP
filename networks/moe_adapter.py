@@ -13,28 +13,32 @@ class MoEAdapter(nn.Module):
 
         self.experts = nn.ModuleList([
             nn.Sequential(
-                nn.Conv2d(dim, hidden, 1),
+                nn.Conv2d(dim, hidden, 3, 1, 1),
+                nn.GELU(),
+                nn.Conv2d(hidden, hidden, 3, 1, 1),
                 nn.GELU(),
                 nn.Conv2d(hidden, dim, 1),
             )
             for _ in range(num_experts)
         ])
 
-        self.routers = nn.ModuleDict()
-        for t in range(1, T + 1):
-            self.routers[str(t)] = nn.Linear(dim, num_experts)
+        self.time_emb = nn.Embedding(T + 1, dim)
+        self.router = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.GELU(),
+            nn.Linear(dim, num_experts),
+        )
 
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.scale = nn.Parameter(torch.zeros(1))
 
     def forward(self, x, t):
 
-        t_key = str(int(t))
-        if t_key not in self.routers:
-            t_key = str(max(1, min(int(t), len(self.routers))))
-
         feat = self.gap(x).squeeze(-1).squeeze(-1)  # [B, C]
-        weights = F.softmax(self.routers[t_key](feat), dim=-1)  # [B, NE]
+        t_clamped = t.clamp(0, self.time_emb.num_embeddings - 1)
+        t_feat = self.time_emb(t_clamped)  # [B, C]
+
+        weights = F.softmax(self.router(torch.cat([feat, t_feat], dim=-1)), dim=-1)  # [B, NE]
 
         expert_out = torch.zeros_like(x)
         for i, expert in enumerate(self.experts):
@@ -71,6 +75,12 @@ def attach_moe_adapters(net, num_experts=10, T=50, reduction=4):
 if __name__ == '__main__':
     adapter = MoEAdapter(dim=64, num_experts=10, T=50, reduction=4)
     x = torch.randn(2, 64, 32, 32)
-    out = adapter(x, t=25)
+    t = torch.tensor([4, 47])
+    out = adapter(x, t)
     print(f'MoEAdapter: input {x.shape} -> output {out.shape}')
     print(f'adapter params: {sum(p.numel() for p in adapter.parameters()):,}')
+
+    # batch with different tmat values
+    t2 = torch.tensor([4, 8])
+    out2 = adapter(x, t2)
+    print(f'mixed tmat batch: {out2.shape}')
