@@ -1,26 +1,4 @@
-"""Inference script for EEDTP restoration network.
 
-Supports both single-task and multi-task unified IR with:
-  - Input ensemble (4-way flip averaging)
-  - Overlapped split-merge for large images
-  - PSNR / SSIM evaluation
-
-Usage:
-    # single-task
-    python TEST.py \
-        --model_path ./ckpt/best_model.pth \
-        --input_path ./data/test_input/ \
-        --gt_path ./data/test_gt/ \
-        --output_path ./results/ \
-        --tmat 47 \
-        --use_ensemble True
-
-    # multi-task (specify task name to auto-select tmat)
-    python TEST.py \
-        --model_path ./ckpt/unified_model.pth \
-        --input_path ./data/test_input/ \
-        --task dehazing
-"""
 import time, torchvision, argparse, logging, sys, os
 import torch, random
 import numpy as np
