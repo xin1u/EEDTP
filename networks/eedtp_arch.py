@@ -77,7 +77,6 @@ class NAFBlock(nn.Module):
         return time_emb.chunk(4, dim=1)
 
     def forward(self, inp_pair):
-        """Forward pass. Input is (feature, time_emb) tuple for nn.Sequential compatibility."""
         inp, time = inp_pair
 
         x = self.norm1(inp)
@@ -105,25 +104,9 @@ class NAFBlock(nn.Module):
 
 
 class EEDTPRestorationNet(nn.Module):
-    """EEDTP conditional restoration network (Sec. III-E, Fig. 8d).
-
-    Conditional NAFNet U-Net backbone with time-step conditioning.
-    Input: (x_t, cond, time) where cond=LQ acts as the SDE mean (mu).
-    The network takes cat(x_t - cond, cond) as input and predicts noise.
-    Restoration: output = cond - net(x_t, cond, time).
-
-    During inference, x_t = cond = LQ, so the network predicts the
-    degradation residual directly.
-
-    Args:
-        img_channel: input/output image channels (default 3)
-        width: base channel width (default 32)
-        middle_blk_num: number of middle blocks (default 6)
-        enc_blk_nums: list of encoder block counts per level
-        dec_blk_nums: list of decoder block counts per level
-    """
-    def __init__(self, img_channel=3, width=32, middle_blk_num=6,
-                 enc_blk_nums=[1, 1, 1, 28], dec_blk_nums=[1, 1, 1, 1]):
+ 
+    def __init__(self, img_channel=3, width=48, middle_blk_num=6,
+                 enc_blk_nums=[2, 2, 4, 28], dec_blk_nums=[2, 2, 2, 2]):
         super().__init__()
 
         fourier_dim = width
@@ -136,7 +119,7 @@ class EEDTPRestorationNet(nn.Module):
             nn.Linear(time_dim, time_dim),
         )
 
-        self.intro = nn.Conv2d(img_channel * 2, width, 3, 1, 1)
+        self.intro = nn.Conv2d(img_channel, width, 3, 1, 1)
         self.ending = nn.Conv2d(width, img_channel, 3, 1, 1)
 
         self.encoders = nn.ModuleList()
@@ -170,24 +153,19 @@ class EEDTPRestorationNet(nn.Module):
             )
 
         self.padder_size = 2 ** len(enc_blk_nums)
+        self.moe_adapters = None
 
-    def forward(self, inp, cond, time):
-        """Forward pass.
+    def forward(self, x, time):
+ 
+        if isinstance(time, (int, float)):
+            time_tensor = torch.tensor([time], dtype=torch.float32, device=x.device).expand(x.shape[0])
+        elif time.dim() == 0:
+            time_tensor = time.float().unsqueeze(0).expand(x.shape[0])
+        else:
+            time_tensor = time.float()
 
-        Args:
-            inp: noisy state x_t [B, C, H, W] (during training) or LQ (during inference)
-            cond: condition image (LQ) [B, C, H, W], acts as SDE mean mu
-            time: diffusion timestep, int/float or [B] tensor
-        Returns:
-            predicted noise [B, C, H, W]
-        """
-        if isinstance(time, int) or isinstance(time, float):
-            time = torch.tensor([time]).to(inp.device)
-
-        x = inp - cond
-        x = torch.cat([x, cond], dim=1)
-
-        t = self.time_mlp(time)
+        t = self.time_mlp(time_tensor)
+        time_int = time_tensor.long()
 
         B, C, H, W = x.shape
         x = self.check_image_size(x)
@@ -202,10 +180,12 @@ class EEDTPRestorationNet(nn.Module):
 
         x, _ = self.middle_blks([x, t])
 
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
+        for i, (decoder, up, enc_skip) in enumerate(zip(self.decoders, self.ups, encs[::-1])):
             x = up(x)
             x = x + enc_skip
             x, _ = decoder([x, t])
+            if self.moe_adapters is not None:
+                x = self.moe_adapters[i](x, time_int)
 
         x = self.ending(x)
         x = x[..., :H, :W]
@@ -221,26 +201,20 @@ class EEDTPRestorationNet(nn.Module):
 
 
 if __name__ == '__main__':
-    device = torch.device('cpu')
     net = EEDTPRestorationNet(
-        img_channel=3, width=32, middle_blk_num=6,
-        enc_blk_nums=[1, 1, 1, 28], dec_blk_nums=[1, 1, 1, 1],
+        img_channel=3, width=48, middle_blk_num=6,
+        enc_blk_nums=[2, 2, 4, 28], dec_blk_nums=[2, 2, 2, 2],
     )
     params = sum(p.numel() for p in net.parameters())
     print(f'params: {params:,}')
 
     x = torch.randn(1, 3, 128, 128)
-    cond = torch.randn(1, 3, 128, 128)
-
-    # test with timestep
-    noise = net(x, cond, time=25)
-    print(f'with t=25: input {x.shape} -> noise {noise.shape}')
-    restored = cond - noise
+    residual = net(x, time=25)
+    print(f'input {x.shape} -> residual {residual.shape}')
+    restored = x - residual
     print(f'restored: {restored.shape}')
 
-    # test with batch timesteps
     t_batch = torch.tensor([10, 20])
     x2 = torch.randn(2, 3, 64, 64)
-    cond2 = torch.randn(2, 3, 64, 64)
-    noise2 = net(x2, cond2, time=t_batch)
-    print(f'batch t: input {x2.shape} -> noise {noise2.shape}')
+    residual2 = net(x2, time=t_batch)
+    print(f'batch t: input {x2.shape} -> residual {residual2.shape}')
