@@ -1,10 +1,4 @@
-"""Diffusion regularization for EEDTP (Sec. III-D).
 
-IRSDE noise perturbation (conditioned on LQ as mean) plus regularization:
-  - L_reg:     parameter importance regularization (Eq. 5)
-  - L_orthog:  gradient orthogonality loss (Eq. 6-8)
-  - w_decay:   layer-wise weight decay for denoising gradients (Eq. 10)
-"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
