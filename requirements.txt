@@ -1,0 +1,9 @@
+torch>=1.10
+torchvision
+numpy
+Pillow
+timm
+tensorboard
+lpips
+opencv-python-headless
+einops
