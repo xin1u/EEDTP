@@ -1,24 +1,4 @@
-"""Multi-task Unified Learning with Time-sequential Incremental Training (MTUL, Sec. III-E.3).
 
-After diffusion denoising pre-training, the network gradually learns
-and accumulates knowledge through incremental training sorted by tmat.
-Each incremental step trains on a new degradation type while preserving
-previous knowledge via MoE adapters with time-based prompts (Fig. 8c-d).
-
-Usage:
-    # single-GPU
-    python train_unified.py \
-        --pre_model ./ckpt/pretrained_model.pth \
-        --data_root ./data/ \
-        --tasks noisy,rainy,jpeg,snowy,inpainting,raindrop,shadowed,lowlight,hazy,blurry \
-        --iters_per_task 100000
-
-    # multi-GPU
-    torchrun --nproc_per_node=4 train_unified.py \
-        --pre_model ./ckpt/pretrained_model.pth \
-        --data_root ./data/ \
-        --tasks noisy,rainy,jpeg,snowy,inpainting,raindrop,shadowed,lowlight,hazy,blurry
-"""
 import time, torchvision, argparse, logging, sys, os, gc
 import torch, random
 import numpy as np
