@@ -5,7 +5,7 @@
 This is the official PyTorch implementation of the paper:
 
 >**Elucidating and Endowing the Diffusion Training Paradigm for Image Restoration**<br>
->Xin Lu, Jie Huang, Jie Xiao, Zihao Fan, Ziang Zhou, Xueyang Fu<sup>&dagger;</sup>, Zheng-Jun Zha<br>
+>Xin Lu, Jie Huang, Jie Xiao, Zihao Fan, Ziang Zhou, Yurui Zhu, Xueyang Fu<sup>&dagger;</sup>, Zheng-Jun Zha<br>
 >University of Science and Technology of China (USTC)<br>
 
 ![intro](assets/intro.png)
@@ -121,7 +121,7 @@ If you find this work useful, please cite:
 ```bibtex
 @article{lu2025eedtp,
   title={Elucidating and Endowing the Diffusion Training Paradigm for Image Restoration},
-  author={Lu, Xin and Huang, Jie and Xiao, Jie and Fan, Zihao and Zhou, Ziang and Fu, Xueyang and Yin, Baocai},
+  author={Lu, Xin and Huang, Jie and Xiao, Jie and Fan, Zihao and Zhou, Ziang and Fu, Xueyang and Zha, Zheng-Jun},
   journal={arXiv preprint arXiv:2506.21722},
   year={2025}
 }
