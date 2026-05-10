@@ -13,14 +13,14 @@ import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from utils.UTILS1 import compute_psnr
 from utils.UTILS import AverageMeters, print_args_parameters
+from loss.losses import fftLoss
 import loss.losses as losses
 from torch.utils.tensorboard import SummaryWriter
 from datasets.datasets_pairs import my_dataset, my_dataset_eval, my_dataset_wTxt
 from networks.eedtp_arch import EEDTPRestorationNet
 from networks.diffusion_reg import (
-    IRSDE, compute_pretrain_loss, compute_denoising_loss,
+    NoiseSchedule, compute_pretrain_loss, compute_denoising_loss,
     ParameterRegularizer, GradientOrthogonalLoss,
-    apply_denoising_weight_decay,
 )
 from utils.dist_utils import init_dist, is_main_process, cleanup
 
@@ -86,11 +86,11 @@ parser.add_argument('--max_psnr', type=int, default=40)
 parser.add_argument('--fix_sampleA', type=int, default=30000)
 
 # arch
-parser.add_argument('--base_channel', type=int, default=32)
+parser.add_argument('--base_channel', type=int, default=48)
 parser.add_argument('--num_res', type=int, default=6)
 parser.add_argument('--img_channel', type=int, default=3)
-parser.add_argument('--enc_blks', nargs='+', type=int, default=[1, 1, 1, 28])
-parser.add_argument('--dec_blks', nargs='+', type=int, default=[1, 1, 1, 1])
+parser.add_argument('--enc_blks', nargs='+', type=int, default=[2, 2, 4, 28])
+parser.add_argument('--dec_blks', nargs='+', type=int, default=[2, 2, 2, 2])
 
 # task
 parser.add_argument('--task', type=str, default='dehazing')
@@ -104,8 +104,8 @@ parser.add_argument('--pre_model', type=str, default='./ckpt/pretrained_model.pt
 parser.add_argument('--diffusion_T', type=int, default=50)
 parser.add_argument('--lambda_reg', type=float, default=0.2)
 parser.add_argument('--gen_prob', type=float, default=0.1)
-parser.add_argument('--decay_rate', type=float, default=0.05)
 parser.add_argument('--importance_batches', type=int, default=50)
+parser.add_argument('--lambda_fft', type=float, default=0.1)
 
 args = parser.parse_args()
 
@@ -125,8 +125,8 @@ def test(net, eval_loader, epoch=1, max_psnr_val=0, Dname='val', save_path='./')
             inputs = Variable(data_in).to(device)
             labels = Variable(label).to(device)
 
-            noise_pred = net_eval(inputs, inputs, args.tmat)
-            outputs = inputs - noise_pred
+            residual = net_eval(inputs, args.tmat)
+            outputs = inputs - residual
 
             eval_meters.update({
                 'out_psnr': compute_psnr(outputs, labels),
@@ -157,11 +157,9 @@ def get_training_dataset():
             datasets_list.append(ds)
         return ConcatDataset(datasets_list)
     else:
-        return my_dataset(
-            root_in=args.training_in_path,
-            root_label=args.training_gt_path,
-            crop_size=args.Crop_patches,
-            fix_sample_A=args.fix_sampleA)
+        return my_dataset(args.training_in_path, args.training_gt_path,
+                          crop_size=args.Crop_patches,
+                          fix_sample_A=args.fix_sampleA)
 
 
 def get_eval_data():
@@ -210,9 +208,9 @@ if __name__ == '__main__':
     if is_main_process():
         print(f'#parameters: {sum(p.numel() for p in net.parameters()):,}')
 
-    sde = IRSDE(max_sigma=10, T=args.diffusion_T, schedule='linear', eps=0.005, device=device)
+    schedule = NoiseSchedule(max_sigma=10, T=args.diffusion_T, schedule='linear', eps=0.005, device=device)
 
-    # parameter regularization setup (on unwrapped model, before DDP)
+    # parameter regularization setup (before DDP wrap)
     param_reg = ParameterRegularizer(net)
     if args.load_pre_model:
         if is_main_process():
@@ -224,7 +222,7 @@ if __name__ == '__main__':
             num_workers=8, shuffle=(imp_sampler is None),
             sampler=imp_sampler, drop_last=True)
         param_reg.compute_importance(
-            net, importance_loader, sde, device,
+            net, importance_loader, schedule, device,
             num_batches=args.importance_batches)
         del importance_loader, imp_dataset, imp_sampler
         gc.collect()
@@ -252,6 +250,7 @@ if __name__ == '__main__':
 
     running_results = {'iter_nums': 0, 'max_psnr_val': 0}
     train_meters = AverageMeters()
+    criterion_fft = fftLoss().to(device)
 
     epoch = 0
     while running_results['iter_nums'] < args.total_iters:
@@ -269,17 +268,20 @@ if __name__ == '__main__':
             inputs = Variable(data_in).to(device)
             labels = Variable(label).to(device)
 
-            noise_pred = net(inputs, inputs, args.tmat)
-            outputs = inputs - noise_pred
+            # restoration: predict residual LQ - GT
+            residual = net(inputs, args.tmat)
+            outputs = inputs - residual
             loss_content = F.l1_loss(outputs, labels)
-            total_loss = loss_content
+            loss_fft = criterion_fft(outputs, labels)
+            total_loss = loss_content + args.lambda_fft * loss_fft
 
             loss_gen = torch.tensor(0.)
             loss_reg = torch.tensor(0.)
             loss_orthog = torch.tensor(0.)
 
             if random.random() < args.gen_prob:
-                loss_gen = compute_denoising_loss(net, labels, inputs, sde)
+                # denoising loss on GT to preserve generative prior
+                loss_gen = compute_denoising_loss(net, labels, schedule)
 
                 loss_orthog = GradientOrthogonalLoss.compute(
                     net, loss_gen, loss_content)
@@ -299,6 +301,7 @@ if __name__ == '__main__':
             train_meters.update({
                 'loss': total_loss.item(),
                 'loss_content': loss_content.item(),
+                'loss_fft': loss_fft.item(),
                 'loss_gen': loss_gen.item() if isinstance(loss_gen, torch.Tensor) else 0.,
                 'loss_reg': loss_reg.item() if isinstance(loss_reg, torch.Tensor) else 0.,
                 'loss_orthog': loss_orthog.item() if isinstance(loss_orthog, torch.Tensor) else 0.,
@@ -312,11 +315,12 @@ if __name__ == '__main__':
                     'loss': train_meters['loss'],
                 }, running_results['iter_nums'])
 
-                print("iter:%d lr:%.7f loss:%.5f(l1:%.4f,gen:%.4f,reg:%.4f,ort:%.4f) "
+                print("iter:%d lr:%.7f loss:%.5f(l1:%.4f,fft:%.4f,gen:%.4f,reg:%.4f,ort:%.4f) "
                       "in:%.2f out:%.2f t:%.1f" % (
                     running_results['iter_nums'],
                     optimizer.param_groups[0]["lr"],
                     train_meters['loss'], loss_content.item(),
+                    loss_fft.item(),
                     loss_gen.item() if isinstance(loss_gen, torch.Tensor) else 0.,
                     loss_reg.item() if isinstance(loss_reg, torch.Tensor) else 0.,
                     loss_orthog.item() if isinstance(loss_orthog, torch.Tensor) else 0.,
