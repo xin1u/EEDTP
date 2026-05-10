@@ -1,25 +1,4 @@
-"""Timestep Matched Diffusion Denoising Pre-training (TMDDP, Sec. III-E.1).
 
-Pre-trains the restoration network as an IRSDE denoiser on GT images.
-During pre-training, both inp and cond are set to GT (mu = x0),
-so the network learns noise prediction in the diffusion latent space.
-
-Usage:
-    # single-GPU
-    python train_pretrain.py \
-        --gt_dir ./data/gt_images/ \
-        --save_path ./ckpt/ \
-        --diffusion_T 50 \
-        --total_iters 100000 \
-        --batch_size 16 \
-        --lr 5e-5
-
-    # multi-GPU
-    torchrun --nproc_per_node=4 train_pretrain.py \
-        --gt_dir ./data/gt_images/ \
-        --save_path ./ckpt/ \
-        --total_iters 100000
-"""
 import argparse, os, time, random, logging, sys
 import torch
 import torch.nn.functional as F
