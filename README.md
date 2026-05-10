@@ -115,13 +115,6 @@ python TEST.py \
 ```
 
 
-## :bar_chart: Matching Timestep (t_mat) for Each Degradation
-
-| Task | Noisy | Rainy | JPEG | Snowy | Inpainting | Raindrop | Shadowed | Low-light | Hazy | Blurry |
-|------|-------|-------|------|-------|------------|----------|----------|-----------|------|--------|
-| t_mat | 0.08T | 0.16T | 0.24T | 0.30T | 0.38T | 0.44T | 0.54T | 0.76T | 0.94T | T |
-
-
 ## :page_facing_up: Citation
 
 If you find this work useful, please cite:
