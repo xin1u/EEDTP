@@ -1,6 +1,8 @@
 # Elucidating and Endowing the Diffusion Training Paradigm for Image Restoration
 
 <a href='https://arxiv.org/abs/2506.21722'><img src='https://img.shields.io/badge/Paper-arXiv-b31b1b.svg'></a> &nbsp;&nbsp;
+<a href='https://github.com/xin1u/EEDTP'><img src='https://img.shields.io/badge/Code-GitHub-181717.svg'></a> &nbsp;&nbsp;
+
 
 This is the official PyTorch implementation of the paper:
 
